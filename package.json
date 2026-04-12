@@ -1,0 +1,14 @@
+{
+  "name": "taskflow",
+  "version": "1.0.0",
+  "description": "Organizador de tarefas para estudantes",
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint src/"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0",
+    "@jest/globals": "^29.0.0"
+  }
+}
