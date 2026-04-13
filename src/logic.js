@@ -49,4 +49,5 @@ function filterByStatus(tasks, status) {
   return tasks.filter(t => t.status === status);
 }
  
+/* eslint-disable no-undef */
 module.exports = { addTask, filterByPriority, filterByStatus };
