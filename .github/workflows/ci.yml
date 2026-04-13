@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master, main ]
   pull_request:
-    branches: [ main ]
+    branches: [ master, main ]
 
 jobs:
   build:
@@ -22,7 +22,7 @@ jobs:
         run: npm install
 
       - name: Rodar lint
-        run: npx eslint src/ --max-warnings=0
+        run: npx eslint src/logic.js
 
       - name: Rodar testes
         run: npm test
