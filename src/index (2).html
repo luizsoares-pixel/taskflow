@@ -374,6 +374,32 @@
     .tag-baixa { background: var(--done-dim); color: var(--done); }
     .tag-date { background: var(--surface2); color: var(--muted); }
 
+    .tag-holiday {
+      background: rgba(255, 94, 94, 0.15);
+      color: var(--danger);
+      border: 0.5px solid rgba(255,94,94,0.3);
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.2rem 0.55rem;
+      border-radius: 100px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .holiday-banner {
+      background: var(--danger-dim);
+      border: 0.5px solid rgba(255,94,94,0.25);
+      border-radius: var(--radius-sm);
+      padding: 0.45rem 0.75rem;
+      font-size: 0.78rem;
+      color: var(--danger);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
     .task-actions {
       display: flex;
       gap: 0.4rem;
@@ -647,15 +673,74 @@
 </div>
 
 <script>
+  // ─── Estado ────────────────────────────────────────────────────────────────
   let tasks = JSON.parse(localStorage.getItem('taskflow') || '[]');
   let editingId = null;
   let activeFilter = 'all';
   let toastTimer = null;
 
+  // Cache de feriados: { "2026": [{date, name}, ...] }
+  let holidaysCache = {};
+
+  // ─── Utilitários ───────────────────────────────────────────────────────────
   function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
-
   function save() { localStorage.setItem('taskflow', JSON.stringify(tasks)); }
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
 
+  // ─── API de Feriados (BrasilAPI) ───────────────────────────────────────────
+  /**
+   * Busca feriados do ano na BrasilAPI e armazena em cache.
+   * GET https://brasilapi.com.br/api/feriados/v1/{ano}
+   * @param {number|string} year
+   * @returns {Promise<Array>} lista de feriados [{date, name, type}]
+   */
+  async function fetchHolidays(year) {
+    if (holidaysCache[year]) return holidaysCache[year];
+    try {
+      const res = await fetch(`https://brasilapi.com.br/api/feriados/v1/${year}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      holidaysCache[year] = data;
+      return data;
+    } catch (err) {
+      console.warn('TaskFlow: erro ao buscar feriados —', err.message);
+      holidaysCache[year] = [];
+      return [];
+    }
+  }
+
+  /**
+   * Verifica se uma data (dd/mm/aaaa) é feriado nacional.
+   * Retorna o nome do feriado ou null.
+   * @param {string} dateBR  ex: "25/12/2026"
+   * @returns {Promise<string|null>}
+   */
+  async function checkHoliday(dateBR) {
+    if (!dateBR) return null;
+    const parts = dateBR.split('/');
+    if (parts.length !== 3) return null;
+    const [d, m, y] = parts;
+    const iso = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+    const holidays = await fetchHolidays(y);
+    const found = holidays.find(h => h.date === iso);
+    return found ? found.name : null;
+  }
+
+  /**
+   * Verifica todas as tarefas com prazo e marca as que caem em feriado.
+   * Atualiza a propriedade `holiday` de cada tarefa e re-renderiza.
+   */
+  async function refreshHolidays() {
+    const withDate = tasks.filter(t => t.date);
+    await Promise.all(withDate.map(async t => {
+      t.holiday = await checkHoliday(t.date);
+    }));
+    render();
+  }
+
+  // ─── Toast ─────────────────────────────────────────────────────────────────
   function showToast(msg) {
     const old = document.querySelector('.toast');
     if (old) old.remove();
@@ -667,23 +752,31 @@
     toastTimer = setTimeout(() => t.remove(), 2800);
   }
 
-  function addTask() {
+  // ─── CRUD de Tarefas ───────────────────────────────────────────────────────
+  async function addTask() {
     const title = document.getElementById('input-title').value.trim();
     if (!title) { showToast('Digite um título para a tarefa'); return; }
+    const date = document.getElementById('input-date').value.trim();
     const task = {
       id: genId(),
       title,
       desc: document.getElementById('input-desc').value.trim(),
       priority: document.getElementById('input-priority').value,
-      date: document.getElementById('input-date').value.trim(),
+      date,
       status: 'pendente',
+      holiday: null,
       created: new Date().toLocaleDateString('pt-BR')
     };
+    if (date) task.holiday = await checkHoliday(date);
     tasks.unshift(task);
     save();
     clearForm();
     render();
-    showToast('Tarefa adicionada!');
+    if (task.holiday) {
+      showToast(`⚠️ Atenção: ${task.holiday} é feriado nacional!`);
+    } else {
+      showToast('Tarefa adicionada!');
+    }
   }
 
   function clearForm() {
@@ -727,20 +820,27 @@
     editingId = null;
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     const t = tasks.find(t => t.id === editingId);
     if (!t) return;
     const title = document.getElementById('edit-title').value.trim();
     if (!title) { showToast('O título não pode ficar vazio'); return; }
+    const date = document.getElementById('edit-date').value.trim();
     t.title = title;
     t.desc = document.getElementById('edit-desc').value.trim();
     t.priority = document.getElementById('edit-priority').value;
     t.status = document.getElementById('edit-status').value;
-    t.date = document.getElementById('edit-date').value.trim();
+    t.date = date;
+    t.holiday = date ? await checkHoliday(date) : null;
     save(); closeModal(); render();
-    showToast('Tarefa atualizada!');
+    if (t.holiday) {
+      showToast(`⚠️ Prazo em feriado: ${t.holiday}`);
+    } else {
+      showToast('Tarefa atualizada!');
+    }
   }
 
+  // ─── Filtros ───────────────────────────────────────────────────────────────
   function setFilter(filter, btn) {
     activeFilter = filter;
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -756,10 +856,13 @@
     return tasks;
   }
 
+  // ─── Renderização ──────────────────────────────────────────────────────────
   function buildCard(t) {
     const isDone = t.status === 'concluída';
     const priorityLabel = { alta: 'Alta', media: 'Média', baixa: 'Baixa' }[t.priority];
     const dateTag = t.date ? `<span class="tag tag-date">📅 ${t.date}</span>` : '';
+    const holidayBanner = t.holiday
+      ? `<div class="holiday-banner">🎉 Feriado: ${escHtml(t.holiday)}</div>` : '';
     const undoBtn = isDone
       ? `<button class="action-btn undo" onclick="undoTask('${t.id}')">Reabrir</button>` : '';
     const completeBtn = !isDone
@@ -776,6 +879,7 @@
             <span class="tag tag-${t.priority}">${priorityLabel}</span>
             ${dateTag}
           </div>
+          ${holidayBanner}
           <div class="task-actions">
             <button class="action-btn edit" onclick="openEdit('${t.id}')">Editar</button>
             ${completeBtn}${undoBtn}
@@ -786,10 +890,6 @@
     `;
   }
 
-  function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
   function emptyState(msg) {
     return `<div class="empty-state"><div class="empty-icon">○</div><div>${msg}</div><p>Nenhuma tarefa aqui ainda</p></div>`;
   }
@@ -797,10 +897,7 @@
   function render() {
     const filtered = getFiltered();
     const cols = { pendente: [], 'em andamento': [], concluída: [] };
-
-    filtered.forEach(t => {
-      if (cols[t.status] !== undefined) cols[t.status].push(t);
-    });
+    filtered.forEach(t => { if (cols[t.status] !== undefined) cols[t.status].push(t); });
 
     document.getElementById('col-pendente').innerHTML =
       cols.pendente.length ? cols.pendente.map(buildCard).join('') : emptyState('Pendentes');
@@ -818,6 +915,7 @@
     document.getElementById('stat-done').textContent = tasks.filter(t => t.status === 'concluída').length;
   }
 
+  // ─── Eventos ───────────────────────────────────────────────────────────────
   document.getElementById('modal').addEventListener('click', function(e) {
     if (e.target === this) closeModal();
   });
@@ -826,18 +924,20 @@
     if (e.key === 'Enter') addTask();
   });
 
-  // Seed demo tasks if empty
+  // ─── Init ──────────────────────────────────────────────────────────────────
   if (tasks.length === 0) {
     tasks = [
-      { id: genId(), title: 'Estudar para a prova de cálculo', desc: 'Revisar integrais e derivadas dos capítulos 5 e 6', priority: 'alta', date: '15/04/2026', status: 'em andamento', created: new Date().toLocaleDateString('pt-BR') },
-      { id: genId(), title: 'Entregar trabalho de TI', desc: 'Finalizar o relatório e subir no portal', priority: 'alta', date: '12/04/2026', status: 'pendente', created: new Date().toLocaleDateString('pt-BR') },
-      { id: genId(), title: 'Fazer lista de exercícios', desc: '', priority: 'media', date: '18/04/2026', status: 'pendente', created: new Date().toLocaleDateString('pt-BR') },
-      { id: genId(), title: 'Comprar material de papelaria', desc: '', priority: 'baixa', date: '', status: 'concluída', created: new Date().toLocaleDateString('pt-BR') },
+      { id: genId(), title: 'Estudar para a prova de cálculo', desc: 'Revisar integrais e derivadas dos capítulos 5 e 6', priority: 'alta', date: '07/09/2026', status: 'em andamento', holiday: null, created: new Date().toLocaleDateString('pt-BR') },
+      { id: genId(), title: 'Entregar trabalho de TI', desc: 'Finalizar o relatório e subir no portal', priority: 'alta', date: '12/10/2026', status: 'pendente', holiday: null, created: new Date().toLocaleDateString('pt-BR') },
+      { id: genId(), title: 'Fazer lista de exercícios', desc: '', priority: 'media', date: '20/11/2026', status: 'pendente', holiday: null, created: new Date().toLocaleDateString('pt-BR') },
+      { id: genId(), title: 'Comprar material de papelaria', desc: '', priority: 'baixa', date: '', status: 'concluída', holiday: null, created: new Date().toLocaleDateString('pt-BR') },
     ];
     save();
   }
 
   render();
+  // Verifica feriados nas tarefas existentes ao carregar
+  refreshHolidays();
 </script>
 </body>
 </html>

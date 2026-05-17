@@ -1,28 +1,34 @@
-name: CI
+name: CI — TaskFlow
 
 on:
   push:
-    branches: [ master, main ]
+    branches: ["**"]
   pull_request:
-    branches: [ master, main ]
+    branches: [main, master]
 
 jobs:
-  build:
+  lint-and-test:
+    name: Lint + Testes
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
 
-      - name: Instalar Node.js
-        uses: actions/setup-node@v3
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: "20"
+          cache: "npm"
 
       - name: Instalar dependências
-        run: npm install
+        run: npm ci
 
-      - name: Rodar lint
-        run: npx eslint src/logic.js
+      - name: Lint (ESLint)
+        run: npm run lint
 
-      - name: Rodar testes
-        run: npm test
+      - name: Testes (unitários + integração)
+        run: npm test -- --forceExit
+        env:
+          # Permite chamadas de rede real no teste de integração
+          NODE_OPTIONS: "--experimental-fetch"
